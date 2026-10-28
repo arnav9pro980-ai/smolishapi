@@ -19,16 +19,13 @@ def extract_active_video_url(current_page):
     """Scans the page DOM to find the currently visible video link (/v/ID)."""
     try:
         url = current_page.evaluate("""() => {
-            // Find all anchor tags containing /v/
             const links = Array.from(document.querySelectorAll('a[href*="/v/"]'));
             for (const link of links) {
                 const rect = link.getBoundingClientRect();
-                // Check if the link is currently visible in the viewport
                 if (rect.top >= 0 && rect.top <= window.innerHeight) {
                     return link.href;
                 }
             }
-            // Fallback to the first found video link if none match viewport bounds
             if (links.length > 0) {
                 return links[0].href;
             }
@@ -114,15 +111,33 @@ def scroll_feed():
         if not page or page.is_closed():
             return jsonify({"success": False, "error": "Feed session not initialized. Call /feed first."}), 400
 
-        # Simulate wheel scroll and page down to snap to the next video card
-        page.evaluate("""() => {
-            window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+        # Execute your specific target container scroll script
+        scrolled = page.evaluate("""() => {
+            const elements = [...document.querySelectorAll("*")]
+                .filter(el => {
+                    const s = getComputedStyle(el);
+                    return el.scrollHeight > el.clientHeight + 10 &&
+                        ["auto", "scroll", "overlay"].includes(s.overflowY);
+                })
+                .sort((a, b) =>
+                    (b.scrollHeight - b.clientHeight) -
+                    (a.scrollHeight - a.clientHeight)
+                );
+
+            const target = elements[0];
+            if (target) {
+                target.scrollTop += window.innerHeight; // Scroll by full viewport height to snap to next reel
+                return true;
+            } else {
+                // Fallback to window scroll if no container found
+                window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+                return false;
+            }
         }""")
-        page.keyboard.press("PageDown")
-        page.wait_for_timeout(3000)
-        
+
+        page.wait_for_timeout(2500) # Give it time to load the next reel in view
         reel_url = extract_active_video_url(page)
-        return jsonify({"success": True, "url": reel_url})
+        return jsonify({"success": True, "scrolled_container": scrolled, "url": reel_url})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
