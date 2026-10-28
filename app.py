@@ -114,8 +114,13 @@ def scroll_feed():
         if not page or page.is_closed():
             return jsonify({"success": False, "error": "Feed session not initialized. Call /feed first."}), 400
 
-        page.keyboard.press("ArrowDown")
-        page.wait_for_timeout(2500)
+        # Simulate wheel scroll and page down to snap to the next video card
+        page.evaluate("""() => {
+            window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+        }""")
+        page.keyboard.press("PageDown")
+        page.wait_for_timeout(3000)
+        
         reel_url = extract_active_video_url(page)
         return jsonify({"success": True, "url": reel_url})
     except Exception as e:
