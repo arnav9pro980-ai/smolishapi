@@ -15,89 +15,48 @@ context = None
 page = None
 
 
-def extract_cookies(curl_text):
-    patterns = [
-        r'-b\s+\^"([\s\S]*?)\^"',
-        r'--cookie\s+\^"([\s\S]*?)\^"',
-        r'-b\s+"([\s\S]*?)"',
-        r'--cookie\s+"([\s\S]*?)"',
-        r"-b\s+'([\s\S]*?)'",
-        r"--cookie\s+'([\s\S]*?)'",
-    ]
-    cookie_string = None
-    for pattern in patterns:
-        match = re.search(pattern, curl_text)
-        if match:
-            cookie_string = match.group(1)
-            break
-
-    if cookie_string is None:
-        raise ValueError("Could not find the cookie argument in curl text")
-
-    cookies = {}
-    for item in cookie_string.split(";"):
-        item = item.strip()
-        if "=" in item:
-            name, value = item.split("=", 1)
-            cookies[name.strip()] = value.strip()
-    return cookies
-
-
-def extract_headers(curl_text):
-    headers = {}
-    for match in re.finditer(r'-H\s+\^"([^"]*(?:\^[^"]*)*)\^"', curl_text):
-        raw = match.group(1)
-        raw = raw.replace('^"', '"').replace("^", "")
-        if ":" in raw:
-            name, value = raw.split(":", 1)
-            headers[name.strip()] = value.strip()
-    return headers
-
-
-def init_browser_with_curl(curl_text):
-    """Initializes Playwright using cookies extracted from the user's cURL string."""
+def get_live_session_data():
+    """Dynamically boots Playwright, navigates to Smolish, and harvests live cookies/headers."""
     global playwright_instance, browser, context, page
-
-    if page and not page.is_closed():
-        return  # Already initialized
-
-    cookies_dict = extract_cookies(curl_text)
 
     if not playwright_instance:
         playwright_instance = sync_playwright().start()
 
-    # Launch headless browser with sandbox flags for Render/Linux container environments
-    browser = playwright_instance.chromium.launch(
-        headless=True,
-        args=[
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-        ]
-    )
-    
-    context = browser.new_context(
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/156.0.0.0 Safari/537.36"
+    if not browser or not browser.is_connected():
+        browser = playwright_instance.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+            ]
         )
-    )
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0.0.0 Safari/537.36"
+            )
+        )
+        page = context.new_page()
 
-    playwright_cookies = [
-        {"name": name, "value": value, "domain": ".smolish.com", "path": "/"}
-        for name, value in cookies_dict.items()
-    ]
-    context.add_cookies(playwright_cookies)
-
-    page = context.new_page()
-    page.goto("https://smolish.com/", wait_until="domcontentloaded")
+    # Hit the home page to trigger any automatic redirects and set valid cookies
+    page.goto("https://smolish.com/", wait_until="networkidle")
     
     try:
-        page.click("body", timeout=3000)
+        page.wait_for_selector('a[href*="/v/"]', timeout=10000)
     except Exception:
         pass
+
+    # Extract cookies from Playwright context to pass to requests session
+    pw_cookies = context.cookies("https://smolish.com/")
+    cookies_dict = {c["name"]: c["value"] for c in pw_cookies}
+    
+    current_url = page.url
+    user_agent = context.pages[0].evaluate("navigator.userAgent")
+
+    return cookies_dict, user_agent, current_url, page
 
 
 @app.route("/", methods=["GET"])
@@ -105,24 +64,17 @@ def index():
     return jsonify({
         "status": "online",
         "endpoints": {
-            "/feed": "POST - Initialize feed by passing JSON body with 'curl_text'",
-            "/scroll": "POST - Scroll down to the next reel and get its redirected URL",
-            "/download": "POST - Download video by providing 'link' and 'curl_text' in JSON body",
+            "/feed": "GET - Fetches the current live feed/redirect URL using auto-harvested cookies",
+            "/scroll": "POST - Scrolls down to the next reel and gets its URL",
+            "/download": "POST - Downloads video by providing 'link' in JSON body",
         },
     })
 
 
-@app.route("/feed", methods=["POST"])
+@app.route("/feed", methods=["GET"])
 def get_feed():
     try:
-        data = request.get_json() or {}
-        curl_text = data.get("curl_text")
-
-        if not curl_text:
-            return jsonify({"success": False, "error": "Missing 'curl_text' parameter in JSON body"}), 400
-
-        init_browser_with_curl(curl_text)
-        current_url = page.url
+        _, _, current_url, _ = get_live_session_data()
         return jsonify({"success": True, "url": current_url})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -131,15 +83,19 @@ def get_feed():
 @app.route("/scroll", methods=["POST"])
 def scroll_feed():
     try:
-        if not page or page.is_closed():
-            return jsonify({"success": False, "error": "Feed session not initialized. Call /feed first with your curl_text."}), 400
+        _, _, _, current_page = get_live_session_data()
+        if not current_page or current_page.is_closed():
+            return jsonify({"success": False, "error": "Browser session not active."}), 400
 
-        # Simulate pressing Down Arrow to trigger the site's native redirect/snap-scroll
-        page.keyboard.press("ArrowDown")
-        page.wait_for_timeout(2500)
+        # Scroll down to load the next reel
+        current_page.evaluate("""() => {
+            window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+        }""")
+        current_page.keyboard.press("PageDown")
+        current_page.wait_for_timeout(3000)
 
-        current_url = page.url
-        return jsonify({"success": True, "url": current_url})
+        new_url = current_page.url
+        return jsonify({"success": True, "url": new_url})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -148,12 +104,9 @@ def scroll_feed():
 def download_video():
     data = request.get_json() or {}
     user_input_link = data.get("link")
-    curl_text = data.get("curl_text")
 
     if not user_input_link:
         return jsonify({"success": False, "error": "Missing 'link' parameter in JSON body"}), 400
-    if not curl_text:
-        return jsonify({"success": False, "error": "Missing 'curl_text' parameter in JSON body"}), 400
 
     id_match = re.search(r"/v/(\d+)", user_input_link)
     if not id_match:
@@ -165,27 +118,19 @@ def download_video():
     page_url = f"https://smolish.com/v/{video_id}"
 
     try:
-        cookies = extract_cookies(curl_text)
-        headers = extract_headers(curl_text)
-    except ValueError as error:
-        return jsonify({"success": False, "error": str(error)}), 400
+        cookies_dict, user_agent, _, _ = get_live_session_data()
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to get session cookies: {str(e)}"}), 500
 
-    headers.setdefault("Accept", "*/*")
-    headers.setdefault("Referer", page_url)
-    headers.setdefault(
-        "User-Agent",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/156.0.0.0 Safari/537.36",
-    )
-
-    headers.pop("Cookie", None)
-    headers.pop("Host", None)
-    headers.pop("Content-Length", None)
+    headers = {
+        "Accept": "*/*",
+        "Referer": page_url,
+        "User-Agent": user_agent,
+    }
 
     session = requests.Session()
     session.headers.update(headers)
-    session.cookies.update(cookies)
+    session.cookies.update(cookies_dict)
 
     try:
         with session.get(url, stream=True, allow_redirects=True, timeout=(15, 120)) as response:
@@ -194,7 +139,7 @@ def download_video():
 
             content_type = response.headers.get("Content-Type", "").lower()
             if "text/html" in content_type or "application/json" in content_type:
-                return jsonify({"success": False, "error": "Response is not a video. Cookies might have expired."}), 400
+                return jsonify({"success": False, "error": "Response is not a video. Verification challenge failed."}), 400
 
             with output_file.open("wb") as output:
                 for chunk in response.iter_content(chunk_size=128 * 1024):
