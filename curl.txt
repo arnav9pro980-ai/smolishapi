@@ -1,14 +1,64 @@
-curl --url ^"https://smolish.com/api/videos/22839004768501760/download?watermark=1^" ^
-  -X ^"HEAD^" ^
+curl --url ^"https://smolish.com/_/q/owOtjQGKveWkxCkkP6Jz31OxBOiZa77gs5LlMUjRksxQAh2bKRL04l6Jpmi45Ab8yX_lrZoeQBCNB1uvjYXinHDtNilEh4Tr4GFzunwlSMfkRE-bS3yBC8dQr6Fb3M11-oGV6QH_^" ^
   -H ^"accept: */*^" ^
   -H ^"accept-language: en-US,en;q=0.9,hi;q=0.8,zh-CN;q=0.7,zh;q=0.6^" ^
-  -b ^"smolish_vd=30255403082186752.0VaOiyRiW-44O0k9V9U3sd32UlT115EJ; sg=GtUMBim7zr8oZSvYYL6WCA.tnz1nh.PqlwylVc6o.j1srhVSD.1.SZax_I0nGVC895d6zKVRIFsYV07oXe7N; sgk=FhZsFL7yAyIomElhY_qHD82Um8z8rKPet7yINCwJc8Q.tnz1nh; cf_clearance=AydDI_ruzZkoHq12CtywrY4zn6YBH7PlNaBiI5rYD00-1793180971-1.2.1.1-IQ9axCbSHImIvXwCcAbQyceQrFCvWuTQSF5eGMquqP8c8d8EgXhaVXjboniG3voGn8aZbHMfm_3uvyJ2OH5k8ya66iLDKU0EM2uwvTdR3FCQlmoqpdrf2newOgNJitFdNGDxy7S.yjjCmkzxU9SuHeg4ixXoq0g1Bdfjibl6h6sDYqJk7pi1Wj1tK0lyht2znoMMJa75X.36I4uF26qL1U7QBOHXxma.g.a3pXjnCWwxYK.6Frv1UJLtkIipPbOfdXq9lcRL8eDW99NZtfIl6Tk.w4ioz1QoGoAWtdUUBYZ2NPVBsG0ggih.ivOAX2fmDxQsjvn95YVmhJaUbDIu4y8B6dc0AucAVTuJMsqjOX8VrbgAg62iQBDQD2v2HpNGhn5wetdV6EW2s0xwN2rEJ.IcT9eMvPZD.vOqx1y323k^" ^
+  -b ^"smolish_vd=30255403082186752.0VaOiyRiW-44O0k9V9U3sd32UlT115EJ; sg=GtUMBim7zr8oZSvYYL6WCA.tnz1nh.PqlwylVc6o.j1srhVSD.1.SZax_I0nGVC895d6zKVRIFsYV07oXe7N; sgk=FhZsFL7yAyIomElhY_qHD82Um8z8rKPet7yINCwJc8Q.tnz1nh; cf_clearance=avXNRj_lbn9z1xUTQTZeSKbPes2ugdrwr42fGoanV_8-1793203137-1.2.1.1-GtalkxivkrQrmO2QEFiDsjrOHa6s9KywXXM96EvRNGQfAIwZeZVAfJjbRYs8.AdIJ1wFV081miGKlnMZ6GwFEsmzBTBYlMhpLTP7rcLGy0J._slcuoVtKArZ7IkvQWSsFMOSBO4sno.CIueosVO82mSCb1W0RWDTvSUFzmU9ePC0DuzH4NBNFNqfZHsUowgk4EntvH2EzlRfsuKCFEZxdppD30tyk9cqpIM2d652m.WqlP2Z230fdUbcKkXTCaWE1rb8KWgcJc65VH4Z0AS8Va9IVzRwzWWwOVGBm4nPi0_u1dMpMyq_JCJd2AslbacRzpaiNiPVMbtGCE8ZkghaBjx3n96I6euoJQjmSIxQY4NO9kr9nclzCKwiph.0oWzck8HNlTXH5Xh1VQ.5ife2Bk1FNXBJnvcUjx6YY7ytfKw^" ^
   -H ^"priority: u=1, i^" ^
-  -H ^"referer: https://smolish.com/v/22839004768501760^" ^
+  -H ^"referer: https://smolish.com/v/10364771668852736^" ^
   -H ^"sec-ch-ua: ^\^"Not:A-Brand^\^";v=^\^"8^\^", ^\^"Chromium^\^";v=^\^"156^\^", ^\^"Google Chrome^\^";v=^\^"156^\^"^" ^
   -H ^"sec-ch-ua-mobile: ?0^" ^
   -H ^"sec-ch-ua-platform: ^\^"Windows^\^"^" ^
   -H ^"sec-fetch-dest: empty^" ^
   -H ^"sec-fetch-mode: cors^" ^
   -H ^"sec-fetch-site: same-origin^" ^
-  -H ^"user-agent: Mozilla/5.0 ^(Windows NT 10.0; Win64; x64^) AppleWebKit/537.36 ^(KHTML, like Gecko^) Chrome/156.0.0.0 Safari/537.36^"
+  -H ^"user-agent: Mozilla/5.0 ^(Windows NT 10.0; Win64; x64^) AppleWebKit/537.36 ^(KHTML, like Gecko^) Chrome/156.0.0.0 Safari/537.36^" ^
+  -H ^"x-sg: tnb2cm^" &
+curl --url ^"https://smolish.com/_/q/xw55nz2zTzX8H6YjABVaK2iI6Onv6nJ74NI3V0Ey35-DmYxNoC12eX1ta9UVPdEp-slCJgFp4U4NqBsedoBcIOxeJ7DADk1B-uc^" ^
+  -H ^"accept: */*^" ^
+  -H ^"accept-language: en-US,en;q=0.9,hi;q=0.8,zh-CN;q=0.7,zh;q=0.6^" ^
+  -H ^"content-type: application/octet-stream^" ^
+  -b ^"smolish_vd=30255403082186752.0VaOiyRiW-44O0k9V9U3sd32UlT115EJ; sg=GtUMBim7zr8oZSvYYL6WCA.tnz1nh.PqlwylVc6o.j1srhVSD.1.SZax_I0nGVC895d6zKVRIFsYV07oXe7N; sgk=FhZsFL7yAyIomElhY_qHD82Um8z8rKPet7yINCwJc8Q.tnz1nh; cf_clearance=avXNRj_lbn9z1xUTQTZeSKbPes2ugdrwr42fGoanV_8-1793203137-1.2.1.1-GtalkxivkrQrmO2QEFiDsjrOHa6s9KywXXM96EvRNGQfAIwZeZVAfJjbRYs8.AdIJ1wFV081miGKlnMZ6GwFEsmzBTBYlMhpLTP7rcLGy0J._slcuoVtKArZ7IkvQWSsFMOSBO4sno.CIueosVO82mSCb1W0RWDTvSUFzmU9ePC0DuzH4NBNFNqfZHsUowgk4EntvH2EzlRfsuKCFEZxdppD30tyk9cqpIM2d652m.WqlP2Z230fdUbcKkXTCaWE1rb8KWgcJc65VH4Z0AS8Va9IVzRwzWWwOVGBm4nPi0_u1dMpMyq_JCJd2AslbacRzpaiNiPVMbtGCE8ZkghaBjx3n96I6euoJQjmSIxQY4NO9kr9nclzCKwiph.0oWzck8HNlTXH5Xh1VQ.5ife2Bk1FNXBJnvcUjx6YY7ytfKw^" ^
+  -H ^"origin: https://smolish.com^" ^
+  -H ^"priority: u=1, i^" ^
+  -H ^"referer: https://smolish.com/v/10364771668852736^" ^
+  -H ^"sec-ch-ua: ^\^"Not:A-Brand^\^";v=^\^"8^\^", ^\^"Chromium^\^";v=^\^"156^\^", ^\^"Google Chrome^\^";v=^\^"156^\^"^" ^
+  -H ^"sec-ch-ua-mobile: ?0^" ^
+  -H ^"sec-ch-ua-platform: ^\^"Windows^\^"^" ^
+  -H ^"sec-fetch-dest: empty^" ^
+  -H ^"sec-fetch-mode: cors^" ^
+  -H ^"sec-fetch-site: same-origin^" ^
+  -H ^"user-agent: Mozilla/5.0 ^(Windows NT 10.0; Win64; x64^) AppleWebKit/537.36 ^(KHTML, like Gecko^) Chrome/156.0.0.0 Safari/537.36^" ^
+  -H ^"x-sg: tnb2cm^" ^
+  -H ^"x-sg-e: 1^" ^
+  --data-raw ^"^ ^ +^ 7^ ^ J^ ^ Q^ j^ ^ ^ ^  ^ ^ wo;4^ ^ ^ ^  R^ '^ -^ J?~^!^ IY^ 7^ ^ ^ ^ 4^ X^ ^ ^ iP^ hd^ ^ ^ ^ ^ ^ 2^ ^ ^ ^ ^ ^|^ Y8^]4^ ^ *.^ ^ w^[^ ^ ^ ^ ^ ^ Je=^ ^ ^ ^ ^ ^ ^<b^ _n^ ^ ^ ^ ^ ^ ^\^\^ ^ ^ ^ Kf^ ^ ^ F'I-6^ ^ _^ ^ ^ ^[^ ^ ^ ^ ^ tP^ ^ ^ ^ *^ ^[^ ^ ^ ^ z^ ^ ^ ^ ^ N^ ^ ;^ 0^ ^ ^ ^ ^ o/^ _^ ^ ^ ^ ^ ^" &
+curl --url ^"https://smolish.com/api/videos/10364771668852736/download?watermark=1^" ^
+  -X ^"HEAD^" ^
+  -H ^"accept: */*^" ^
+  -H ^"accept-language: en-US,en;q=0.9,hi;q=0.8,zh-CN;q=0.7,zh;q=0.6^" ^
+  -b ^"smolish_vd=30255403082186752.0VaOiyRiW-44O0k9V9U3sd32UlT115EJ; sg=GtUMBim7zr8oZSvYYL6WCA.tnz1nh.PqlwylVc6o.j1srhVSD.1.SZax_I0nGVC895d6zKVRIFsYV07oXe7N; sgk=FhZsFL7yAyIomElhY_qHD82Um8z8rKPet7yINCwJc8Q.tnz1nh; cf_clearance=avXNRj_lbn9z1xUTQTZeSKbPes2ugdrwr42fGoanV_8-1793203137-1.2.1.1-GtalkxivkrQrmO2QEFiDsjrOHa6s9KywXXM96EvRNGQfAIwZeZVAfJjbRYs8.AdIJ1wFV081miGKlnMZ6GwFEsmzBTBYlMhpLTP7rcLGy0J._slcuoVtKArZ7IkvQWSsFMOSBO4sno.CIueosVO82mSCb1W0RWDTvSUFzmU9ePC0DuzH4NBNFNqfZHsUowgk4EntvH2EzlRfsuKCFEZxdppD30tyk9cqpIM2d652m.WqlP2Z230fdUbcKkXTCaWE1rb8KWgcJc65VH4Z0AS8Va9IVzRwzWWwOVGBm4nPi0_u1dMpMyq_JCJd2AslbacRzpaiNiPVMbtGCE8ZkghaBjx3n96I6euoJQjmSIxQY4NO9kr9nclzCKwiph.0oWzck8HNlTXH5Xh1VQ.5ife2Bk1FNXBJnvcUjx6YY7ytfKw^" ^
+  -H ^"priority: u=1, i^" ^
+  -H ^"referer: https://smolish.com/v/10364771668852736^" ^
+  -H ^"sec-ch-ua: ^\^"Not:A-Brand^\^";v=^\^"8^\^", ^\^"Chromium^\^";v=^\^"156^\^", ^\^"Google Chrome^\^";v=^\^"156^\^"^" ^
+  -H ^"sec-ch-ua-mobile: ?0^" ^
+  -H ^"sec-ch-ua-platform: ^\^"Windows^\^"^" ^
+  -H ^"sec-fetch-dest: empty^" ^
+  -H ^"sec-fetch-mode: cors^" ^
+  -H ^"sec-fetch-site: same-origin^" ^
+  -H ^"user-agent: Mozilla/5.0 ^(Windows NT 10.0; Win64; x64^) AppleWebKit/537.36 ^(KHTML, like Gecko^) Chrome/156.0.0.0 Safari/537.36^" &
+curl --url ^"https://analytics.outpoot.com/api/event^" ^
+  -H ^"accept: */*^" ^
+  -H ^"accept-language: en-US,en;q=0.9,hi;q=0.8,zh-CN;q=0.7,zh;q=0.6^" ^
+  -H ^"content-type: text/plain^" ^
+  -H ^"origin: https://smolish.com^" ^
+  -H ^"priority: u=1, i^" ^
+  -H ^"referer: https://smolish.com/^" ^
+  -H ^"sec-ch-ua: ^\^"Not:A-Brand^\^";v=^\^"8^\^", ^\^"Chromium^\^";v=^\^"156^\^", ^\^"Google Chrome^\^";v=^\^"156^\^"^" ^
+  -H ^"sec-ch-ua-mobile: ?0^" ^
+  -H ^"sec-ch-ua-platform: ^\^"Windows^\^"^" ^
+  -H ^"sec-fetch-dest: empty^" ^
+  -H ^"sec-fetch-mode: cors^" ^
+  -H ^"sec-fetch-site: cross-site^" ^
+  -H ^"user-agent: Mozilla/5.0 ^(Windows NT 10.0; Win64; x64^) AppleWebKit/537.36 ^(KHTML, like Gecko^) Chrome/156.0.0.0 Safari/537.36^" ^
+  --data-raw ^"^{^\^"n^\^":^\^"engagement^\^",^\^"sd^\^":100,^\^"d^\^":^\^"smolish.com^\^",^\^"u^\^":^\^"https://smolish.com/^\^",^\^"e^\^":4394,^\^"v^\^":33^}^" &
+# Unsupported URL scheme &
+# Unsupported URL scheme &
+# Unsupported URL scheme
