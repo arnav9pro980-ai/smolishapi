@@ -46,7 +46,7 @@ def init_browser(cookies_dict=None):
     if not playwright_instance:
         playwright_instance = sync_playwright().start()
 
-    # Launch headless browser with sandbox flags required for Linux/Render servers
+    # Launch headless browser with sandbox flags & realistic viewport size
     browser = playwright_instance.chromium.launch(
         headless=True,
         args=[
@@ -58,6 +58,7 @@ def init_browser(cookies_dict=None):
     )
     
     context = browser.new_context(
+        viewport={"width": 1280, "height": 800},  # Realistic desktop viewport
         user_agent=(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -73,7 +74,14 @@ def init_browser(cookies_dict=None):
         context.add_cookies(playwright_cookies)
 
     page = context.new_page()
-    page.goto("https://smolish.com/", wait_until="domcontentloaded")
+    page.goto("https://smolish.com/", wait_until="networkidle")
+    
+    # Wait until video elements are fully loaded in DOM
+    try:
+        page.wait_for_selector('a[href*="/v/"]', timeout=10000)
+    except Exception:
+        pass
+
     try:
         page.click("body", timeout=3000)
     except Exception:
@@ -111,7 +119,7 @@ def scroll_feed():
         if not page or page.is_closed():
             return jsonify({"success": False, "error": "Feed session not initialized. Call /feed first."}), 400
 
-        # Execute your specific target container scroll script
+        # Execute your target container scroll logic
         scrolled = page.evaluate("""() => {
             const elements = [...document.querySelectorAll("*")]
                 .filter(el => {
@@ -126,16 +134,15 @@ def scroll_feed():
 
             const target = elements[0];
             if (target) {
-                target.scrollTop += window.innerHeight; // Scroll by full viewport height to snap to next reel
+                target.scrollTop += window.innerHeight;
                 return true;
             } else {
-                // Fallback to window scroll if no container found
                 window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
                 return false;
             }
         }""")
 
-        page.wait_for_timeout(2500) # Give it time to load the next reel in view
+        page.wait_for_timeout(3000)
         reel_url = extract_active_video_url(page)
         return jsonify({"success": True, "scrolled_container": scrolled, "url": reel_url})
     except Exception as e:
