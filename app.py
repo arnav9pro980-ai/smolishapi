@@ -1,532 +1,139 @@
-
 import re
-from pathlib import Path
-
 import requests
-from flask import Flask, jsonify, request, send_file, Response
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from playwright.sync_api import sync_playwright
 
-app = Flask(__name__)
+app = FastAPI(title="Smolish Downloader API")
 
-BASE_DIR = Path(__file__).resolve().parent
-CURL_FILE = BASE_DIR / "curl.txt"
+# ================= HARDCODED CREDENTIALS =================
+# !!! This file must NEVER go into a public repo. !!!
+# These cookies ARE your logged-in session.
 
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/156.0.0.0 Safari/537.36"
-)
+COOKIES = {
+    "smolish_vd": "30255403082186752.0VaOiyRiW-44O0k9V9U3sd32UlT115EJ",
+    "sg": "GtUMBim7zr8oZSvYYL6WCA.tnz1nh.PqlwylVc6o.j1srhVSD.1.SZax_I0nGVC895d6zKVRIFsYV07oXe7N",
+    "sgk": "FhZsFL7yAyIomElhY_qHD82Um8z8rKPet7yINCwJc8Q.tnz1nh",
+    "cf_clearance": "AydDI_ruzZkoHq12CtywrY4zn6YBH7PlNaBiI5rYD00-1793180971-1.2.1.1-IQ9axCbSHImIvXwCcAbQyceQrFCvWuTQSF5eGMquqP8c8d8EgXhaVXjboniG3voGn8aZbHMfm_3uvyJ2OH5k8ya66iLDKU0EM2uwvTdR3FCQlmoqpdrf2newOgNJitFdNGDxy7S.yjjCmkzxU9SuHeg4ixXoq0g1Bdfjibl6h6sDYqJk7pi1Wj1tK0lyht2znoMMJa75X.36I4uF26qL1U7QBOHXxma.g.a3pXjnCWwxYK.6Frv1UJLtkIipPbOfdXq9lcRL8eDW99NZtfIl6Tk.w4ioz1QoGoAWtdUUBYZ2NPVBsG0ggih.ivOAX2fmDxQsjvn95YVmhJaUbDIu4y8B6dc0AucAVTuJMsqjOX8VrbgAg62iQBDQD2v2HpNGhn5wetdV6EW2s0xwN2rEJ.IcT9eMvPZD.vOqx1y323k",
+}
 
-playwright_instance = None
-browser = None
-context = None
-page = None
+HEADERS = {
+    "accept": "*/*",
+    "accept-language": "en-US,en;q=0.9,hi;q=0.8,zh-CN;q=0.7,zh;q=0.6",
+    "priority": "u=1, i",
+    "sec-ch-ua": '"Not:A-Brand";v="8", "Chromium";v="156", "Google Chrome";v="156"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "user-agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/156.0.0.0 Safari/537.36"
+    ),
+}
+# ==========================================================
 
 
-def extract_cookies(curl_text):
-    patterns = [
-        r'-b\s+\^"([\s\S]*?)\^"',
-        r'--cookie\s+\^"([\s\S]*?)\^"',
-        r'-b\s+"([\s\S]*?)"',
-        r'--cookie\s+"([\s\S]*?)"',
-        r"-b\s+'([\s\S]*?)'",
-        r"--cookie\s+'([\s\S]*?)'",
+def get_session(page_url: str) -> requests.Session:
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    session.headers["Referer"] = page_url  # per-video referer
+    session.cookies.update(COOKIES)
+    return session
+
+
+def parse_video_id(link: str) -> str:
+    m = re.search(r"/v/(\d+)", link)
+    if not m:
+        raise HTTPException(400, "Could not extract video ID. Expected https://smolish.com/v/<id>")
+    return m.group(1)
+
+
+@app.get("/")
+def health():
+    return {"status": "ok", "cookies_loaded": len(COOKIES)}
+
+
+@app.get("/download/{video_id}")
+def download(video_id: str, watermark: int = 0):
+    page_url = f"https://smolish.com/v/{video_id}"
+    url = f"https://smolish.com/api/videos/{video_id}/download?watermark={watermark}"
+    session = get_session(page_url)
+
+    upstream = session.get(url, stream=True, allow_redirects=True, timeout=(15, 120))
+    ctype = upstream.headers.get("Content-Type", "").lower()
+
+    if upstream.status_code != 200:
+        snippet = upstream.text[:300] if "json" in ctype else ""
+        upstream.close()
+        raise HTTPException(502, f"Upstream returned {upstream.status_code} {snippet}")
+
+    if "text/html" in ctype or "application/json" in ctype:
+        upstream.close()
+        raise HTTPException(502, "Upstream returned a challenge/HTML page — cookies are stale. Re-copy the cURL and update COOKIES in main.py.")
+
+    def chunk_iter():
+        try:
+            for chunk in upstream.iter_content(chunk_size=256 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    out_headers = {"Content-Disposition": f'attachment; filename="{video_id}.mp4"'}
+    if "Content-Length" in upstream.headers:
+        out_headers["Content-Length"] = upstream.headers["Content-Length"]
+
+    return StreamingResponse(
+        chunk_iter(),
+        media_type=upstream.headers.get("Content-Type", "video/mp4"),
+        headers=out_headers,
+    )
+
+
+class DownloadBody(BaseModel):
+    link: str
+    watermark: int = 0
+
+
+@app.post("/download")
+def download_by_link(body: DownloadBody):
+    return download(video_id=parse_video_id(body.link), watermark=body.watermark)
+
+
+@app.get("/feed")
+def feed(count: int = 5):
+    playwright_cookies = [
+        {"name": n, "value": v, "domain": ".smolish.com", "path": "/"}
+        for n, v in COOKIES.items()
     ]
 
-    cookie_string = None
-
-    for pattern in patterns:
-        match = re.search(pattern, curl_text)
-        if match:
-            cookie_string = match.group(1)
-            break
-
-    if cookie_string is None:
-        raise ValueError("Could not find cookies in curl.txt")
-
-    cookies = {}
-
-    for item in cookie_string.split(";"):
-        item = item.strip()
-
-        if "=" in item:
-            name, value = item.split("=", 1)
-            cookies[name.strip()] = value.strip()
-
-    return cookies
-
-
-def load_cookies():
-    if not CURL_FILE.exists():
-        return {}
-
-    curl_text = CURL_FILE.read_text(encoding="utf-8")
-    return extract_cookies(curl_text)
-
-
-def extract_active_video_url(current_page):
-    try:
-        return current_page.evaluate("""() => {
-            const elements = document.querySelectorAll(
-                'a[href*="/v/"], [data-url*="/v/"]'
-            );
-
-            for (const el of elements) {
-                const href =
-                    el.href ||
-                    el.getAttribute('data-url') ||
-                    el.getAttribute('href') ||
-                    '';
-
-                const match = href.match(/\\/v\\/(\\d+)/);
-
-                if (match) {
-                    const rect = el.getBoundingClientRect();
-
-                    if (
-                        rect.top >= -200 &&
-                        rect.top <= window.innerHeight + 200
-                    ) {
-                        return 'https://smolish.com/v/' + match[1];
-                    }
-                }
-            }
-
-            const html = document.body?.innerHTML || '';
-            const match = html.match(/\\/v\\/(\\d+)/);
-
-            if (match) {
-                return 'https://smolish.com/v/' + match[1];
-            }
-
-            return window.location.href;
-        }""")
-    except Exception:
-        return current_page.url
-
-
-def init_browser(cookies_dict=None):
-    global playwright_instance, browser, context, page
-
-    if page and not page.is_closed():
-        return
-
-    if cookies_dict is None:
-        cookies_dict = load_cookies()
-
-    if playwright_instance is None:
-        playwright_instance = sync_playwright().start()
-
-    browser = playwright_instance.chromium.launch(
-        headless=True,
-        args=[
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-        ],
-    )
-
-    context = browser.new_context(
-        viewport={"width": 412, "height": 915},
-        user_agent=USER_AGENT,
-        locale="en-US",
-    )
-
-    if cookies_dict:
-        playwright_cookies = [
-            {
-                "name": name,
-                "value": value,
-                "domain": ".smolish.com",
-                "path": "/",
-                "secure": True,
-            }
-            for name, value in cookies_dict.items()
-        ]
-
+    urls = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)  # must be headless on Render
+        context = browser.new_context(user_agent=HEADERS["user-agent"])
         context.add_cookies(playwright_cookies)
+        page = context.new_page()
+        page.goto("https://smolish.com/", wait_until="domcontentloaded")
+        try:
+            page.click("body", timeout=3000)
+        except Exception:
+            pass
 
-    page = context.new_page()
+        current = page.url
+        if re.search(r"/v/\d+", current):
+            urls.append(current)
 
-    page.on(
-        "console",
-        lambda msg: print(f"[BROWSER CONSOLE] {msg.type}: {msg.text}")
-        if msg.type == "error"
-        else None,
-    )
+        for _ in range(max(1, min(count, 25))):
+            page.keyboard.press("ArrowDown")
+            page.wait_for_timeout(2500)
+            if page.url != current:
+                current = page.url
+                urls.append(current)
 
-    page.on(
-        "pageerror",
-        lambda error: print(f"[BROWSER ERROR] {error}"),
-    )
+        browser.close()
 
-    response = page.goto(
-        "https://smolish.com/",
-        wait_until="domcontentloaded",
-        timeout=60000,
-    )
-
-    print("[BROWSER] URL:", page.url)
-    print("[BROWSER] HTTP:", response.status if response else "No response")
-    print("[BROWSER] Title:", page.title())
-    print("[BROWSER] Cookies loaded:", len(cookies_dict))
-
-    try:
-        page.click("body", timeout=3000)
-    except Exception:
-        pass
-
-
-@app.route("/", methods=["GET"])
-def index():
-    return jsonify({
-        "status": "online",
-        "browser_initialized": bool(page and not page.is_closed()),
-        "endpoints": {
-            "/feed": "POST - Initialize feed; optional JSON cookies",
-            "/scroll": "POST - Scroll to the next reel",
-            "/screen": "GET - Screenshot of the current browser",
-            "/status": "GET - Browser and verification diagnostics",
-            "/download": "POST - Download a video using its link",
-        },
-    })
-
-
-@app.route("/feed", methods=["POST"])
-def get_feed():
-    try:
-        data = request.get_json(silent=True) or {}
-        cookies_dict = data.get("cookies")
-
-        init_browser(cookies_dict)
-
-        return jsonify({
-            "success": True,
-            "url": extract_active_video_url(page),
-            "title": page.title(),
-            "current_page": page.url,
-        })
-
-    except Exception as error:
-        return jsonify({
-            "success": False,
-            "error": str(error),
-        }), 500
-
-
-@app.route("/status", methods=["GET"])
-def status():
-    if not page or page.is_closed():
-        return jsonify({
-            "initialized": False,
-            "message": "Call POST /feed first.",
-        })
-
-    try:
-        details = page.evaluate("""() => ({
-            url: location.href,
-            title: document.title,
-            readyState: document.readyState,
-            bodyText: (document.body?.innerText || '').slice(0, 3000),
-            videoCount: document.querySelectorAll('video').length,
-            linkCount: document.querySelectorAll('a[href*="/v/"]').length,
-            challengeIndicators: [
-                'captcha',
-                'verify you are human',
-                'checking your browser',
-                'request could not be verified'
-            ].filter(term =>
-                (document.body?.innerText || '').toLowerCase().includes(term)
-            )
-        })""")
-
-        details["initialized"] = True
-        details["cookies"] = [
-            cookie["name"]
-            for cookie in context.cookies("https://smolish.com")
-        ]
-
-        return jsonify(details)
-
-    except Exception as error:
-        return jsonify({
-            "initialized": False,
-            "error": str(error),
-        }), 500
-
-
-@app.route("/screen", methods=["GET"])
-def screen():
-    try:
-        if not page or page.is_closed():
-            return jsonify({
-                "success": False,
-                "error": "Call POST /feed first.",
-            }), 400
-
-        screenshot = page.screenshot(
-            type="png",
-            full_page=False,
-            animations="disabled",
-        )
-
-        return Response(
-            screenshot,
-            mimetype="image/png",
-            headers={"Cache-Control": "no-store"},
-        )
-
-    except Exception as error:
-        return jsonify({
-            "success": False,
-            "error": str(error),
-        }), 500
-
-
-@app.route("/scroll", methods=["POST"])
-def scroll_feed():
-    try:
-        if not page or page.is_closed():
-            return jsonify({
-                "success": False,
-                "error": "Call POST /feed first.",
-            }), 400
-
-        before = page.evaluate("""() => {
-            const video = document.querySelector('video');
-            const scrollables = [...document.querySelectorAll('*')]
-                .filter(el => {
-                    const style = getComputedStyle(el);
-                    return /(auto|scroll|overlay)/.test(style.overflowY) &&
-                        el.scrollHeight > el.clientHeight + 20 &&
-                        el.clientHeight > 0;
-                })
-                .map(el => ({
-                    el,
-                    top: el.scrollTop,
-                    max: el.scrollHeight - el.clientHeight,
-                    clientHeight: el.clientHeight,
-                    containsVideo: !!video && el.contains(video),
-                    tag: el.tagName,
-                    id: el.id || '',
-                    className: typeof el.className === 'string'
-                        ? el.className.slice(0, 120) : ''
-                }))
-                .sort((a, b) =>
-                    Number(b.containsVideo) - Number(a.containsVideo) ||
-                    b.max - a.max
-                );
-
-            return {
-                url: location.href,
-                scrollY: window.scrollY,
-                scrollHeight: document.documentElement.scrollHeight,
-                innerHeight: window.innerHeight,
-                videoCount: document.querySelectorAll('video').length,
-                activeVideo: video?.currentSrc || null,
-                containers: scrollables.slice(0, 8).map(x => ({
-                    tag: x.tag, id: x.id, className: x.className,
-                    top: x.top, max: x.max, containsVideo: x.containsVideo
-                }))
-            };
-        }""")
-
-        scroll_result = page.evaluate("""() => {
-            const video = document.querySelector('video');
-            const candidates = [...document.querySelectorAll('*')]
-                .filter(el => {
-                    const style = getComputedStyle(el);
-                    return /(auto|scroll|overlay)/.test(style.overflowY) &&
-                        el.scrollHeight > el.clientHeight + 20 &&
-                        el.clientHeight > 0;
-                })
-                .map(el => ({
-                    el,
-                    max: el.scrollHeight - el.clientHeight,
-                    containsVideo: !!video && el.contains(video)
-                }))
-                .sort((a, b) =>
-                    Number(b.containsVideo) - Number(a.containsVideo) ||
-                    b.max - a.max
-                );
-
-            const target = candidates[0];
-            let containerBefore = null;
-            let containerAfter = null;
-
-            if (target) {
-                containerBefore = target.el.scrollTop;
-                target.el.scrollTop = Math.min(
-                    target.el.scrollTop + Math.max(450, target.el.clientHeight * 0.85),
-                    target.el.scrollHeight - target.el.clientHeight
-                );
-                target.el.dispatchEvent(new Event('scroll', { bubbles: true }));
-                containerAfter = target.el.scrollTop;
-            }
-
-            const windowBefore = window.scrollY;
-            window.scrollBy({ top: Math.max(450, window.innerHeight * 0.85), behavior: 'auto' });
-
-            return {
-                target: target ? {
-                    tag: target.el.tagName,
-                    id: target.el.id || null,
-                    className: typeof target.el.className === 'string'
-                        ? target.el.className.slice(0, 120) : null
-                } : null,
-                containerBefore,
-                containerAfter,
-                windowBefore,
-                windowAfter: window.scrollY
-            };
-        }""")
-
-        page.mouse.move(680, 650)
-        page.mouse.wheel(0, 750)
-        page.keyboard.press("ArrowDown")
-        page.wait_for_timeout(1500)
-
-        after = page.evaluate("""() => ({
-            url: location.href,
-            scrollY: window.scrollY,
-            scrollHeight: document.documentElement.scrollHeight,
-            innerHeight: window.innerHeight,
-            videoCount: document.querySelectorAll('video').length,
-            activeVideo: document.querySelector('video')?.currentSrc || null,
-            videoLinks: [...document.querySelectorAll('a[href*="/v/"]')]
-                .slice(0, 10).map(a => a.href),
-            bodyText: (document.body?.innerText || '').slice(0, 800)
-        })""")
-
-        moved = (
-            before["url"] != after["url"]
-            or before["scrollY"] != after["scrollY"]
-            or before["activeVideo"] != after["activeVideo"]
-            or scroll_result["containerBefore"] != scroll_result["containerAfter"]
-            or scroll_result["windowBefore"] != scroll_result["windowAfter"]
-        )
-
-        return jsonify({
-            "success": True,
-            "moved": moved,
-            "before": before,
-            "scroll_attempt": scroll_result,
-            "after": after,
-            "active_video_url": extract_active_video_url(page),
-            "message": (
-                "Scroll movement detected."
-                if moved else
-                "No movement detected. Inspect /screen and /status. "
-                "If the site displays a verification screen, scrolling will "
-                "not work until the site permits access."
-            )
-        })
-
-    except Exception as error:
-        return jsonify({
-            "success": False,
-            "error": str(error),
-        }), 500
-
-
-@app.route("/download", methods=["POST"])
-def download_video():
-    data = request.get_json(silent=True) or {}
-    link = data.get("link")
-
-    if not link:
-        return jsonify({
-            "success": False,
-            "error": "Missing 'link' parameter.",
-        }), 400
-
-    match = re.search(r"/v/(\d+)", link)
-
-    if not match:
-        return jsonify({
-            "success": False,
-            "error": "Could not extract video ID.",
-        }), 400
-
-    video_id = match.group(1)
-    output_file = BASE_DIR / f"{video_id}.mp4"
-
-    try:
-        cookies = data.get("cookies")
-
-        if cookies is None:
-            cookies = load_cookies()
-
-        session = requests.Session()
-        session.headers.update({
-            "Accept": "*/*",
-            "Referer": f"https://smolish.com/v/{video_id}",
-            "User-Agent": USER_AGENT,
-        })
-        session.cookies.update(cookies)
-
-        url = (
-            f"https://smolish.com/api/videos/"
-            f"{video_id}/download?watermark=1"
-        )
-
-        with session.get(
-            url,
-            stream=True,
-            allow_redirects=True,
-            timeout=(15, 120),
-        ) as response:
-            content_type = response.headers.get(
-                "Content-Type", ""
-            ).lower()
-
-            if response.status_code != 200:
-                return jsonify({
-                    "success": False,
-                    "error": f"HTTP {response.status_code}",
-                    "content_type": content_type,
-                    "details": (
-                        response.text[:1000]
-                        if "json" in content_type or "html" in content_type
-                        else None
-                    ),
-                }), 400
-
-            if (
-                "text/html" in content_type
-                or "application/json" in content_type
-            ):
-                return jsonify({
-                    "success": False,
-                    "error": (
-                        "The server returned a verification or error "
-                        "response instead of a video."
-                    ),
-                    "content_type": content_type,
-                }), 400
-
-            with output_file.open("wb") as output:
-                for chunk in response.iter_content(
-                    chunk_size=128 * 1024
-                ):
-                    if chunk:
-                        output.write(chunk)
-
-        return send_file(output_file, as_attachment=True)
-
-    except requests.RequestException as error:
-        return jsonify({
-            "success": False,
-            "error": str(error),
-        }), 500
-
-    except Exception as error:
-        return jsonify({
-            "success": False,
-            "error": str(error),
-        }), 500
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    return {"videos": urls}
