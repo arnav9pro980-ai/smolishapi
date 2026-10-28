@@ -1,0 +1,14 @@
+curl --url ^"https://smolish.com/api/videos/22839004768501760/download?watermark=1^" ^
+  -X ^"HEAD^" ^
+  -H ^"accept: */*^" ^
+  -H ^"accept-language: en-US,en;q=0.9,hi;q=0.8,zh-CN;q=0.7,zh;q=0.6^" ^
+  -b ^"smolish_vd=30255403082186752.0VaOiyRiW-44O0k9V9U3sd32UlT115EJ; sg=GtUMBim7zr8oZSvYYL6WCA.tnz1nh.PqlwylVc6o.j1srhVSD.1.SZax_I0nGVC895d6zKVRIFsYV07oXe7N; sgk=FhZsFL7yAyIomElhY_qHD82Um8z8rKPet7yINCwJc8Q.tnz1nh; cf_clearance=AydDI_ruzZkoHq12CtywrY4zn6YBH7PlNaBiI5rYD00-1793180971-1.2.1.1-IQ9axCbSHImIvXwCcAbQyceQrFCvWuTQSF5eGMquqP8c8d8EgXhaVXjboniG3voGn8aZbHMfm_3uvyJ2OH5k8ya66iLDKU0EM2uwvTdR3FCQlmoqpdrf2newOgNJitFdNGDxy7S.yjjCmkzxU9SuHeg4ixXoq0g1Bdfjibl6h6sDYqJk7pi1Wj1tK0lyht2znoMMJa75X.36I4uF26qL1U7QBOHXxma.g.a3pXjnCWwxYK.6Frv1UJLtkIipPbOfdXq9lcRL8eDW99NZtfIl6Tk.w4ioz1QoGoAWtdUUBYZ2NPVBsG0ggih.ivOAX2fmDxQsjvn95YVmhJaUbDIu4y8B6dc0AucAVTuJMsqjOX8VrbgAg62iQBDQD2v2HpNGhn5wetdV6EW2s0xwN2rEJ.IcT9eMvPZD.vOqx1y323k^" ^
+  -H ^"priority: u=1, i^" ^
+  -H ^"referer: https://smolish.com/v/22839004768501760^" ^
+  -H ^"sec-ch-ua: ^\^"Not:A-Brand^\^";v=^\^"8^\^", ^\^"Chromium^\^";v=^\^"156^\^", ^\^"Google Chrome^\^";v=^\^"156^\^"^" ^
+  -H ^"sec-ch-ua-mobile: ?0^" ^
+  -H ^"sec-ch-ua-platform: ^\^"Windows^\^"^" ^
+  -H ^"sec-fetch-dest: empty^" ^
+  -H ^"sec-fetch-mode: cors^" ^
+  -H ^"sec-fetch-site: same-origin^" ^
+  -H ^"user-agent: Mozilla/5.0 ^(Windows NT 10.0; Win64; x64^) AppleWebKit/537.36 ^(KHTML, like Gecko^) Chrome/156.0.0.0 Safari/537.36^"
