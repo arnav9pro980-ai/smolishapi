@@ -16,19 +16,29 @@ page = None
 
 
 def extract_active_video_url(current_page):
-    """Scans the page DOM to find the currently visible video link (/v/ID)."""
+    """Deep scans the DOM to find any active video ID matching /v/ID in the viewport."""
     try:
         url = current_page.evaluate("""() => {
-            const links = Array.from(document.querySelectorAll('a[href*="/v/"]'));
-            for (const link of links) {
-                const rect = link.getBoundingClientRect();
-                if (rect.top >= 0 && rect.top <= window.innerHeight) {
-                    return link.href;
+            // 1. Search all elements with href, data attributes, or internal links containing /v/
+            const allElements = document.querySelectorAll('*');
+            for (const el of allElements) {
+                const href = el.href || el.getAttribute('href') || el.getAttribute('data-url') || '';
+                const match = href.match(/\/v\/(\d+)/);
+                if (match) {
+                    const rect = el.getBoundingClientRect();
+                    // Check if it's currently visible in the viewport window
+                    if (rect.top >= -200 && rect.top <= window.innerHeight + 200) {
+                        return 'https://smolish.com/v/' + match[1];
+                    }
                 }
             }
-            if (links.length > 0) {
-                return links[0].href;
+            
+            // 2. Fallback: Search for any /v/ pattern anywhere in the HTML body
+            const matches = [...document.body.innerHTML.matchAll(/\/v\/(\d+)/g)];
+            if (matches.length > 0) {
+                return 'https://smolish.com/v/' + matches[0][1];
             }
+            
             return window.location.href;
         }""")
         return url
@@ -46,7 +56,7 @@ def init_browser(cookies_dict=None):
     if not playwright_instance:
         playwright_instance = sync_playwright().start()
 
-    # Launch headless browser with sandbox flags & realistic viewport size
+    # Launch headless browser with sandbox flags & realistic mobile/desktop viewport
     browser = playwright_instance.chromium.launch(
         headless=True,
         args=[
@@ -58,11 +68,11 @@ def init_browser(cookies_dict=None):
     )
     
     context = browser.new_context(
-        viewport={"width": 1280, "height": 800},  # Realistic desktop viewport
+        viewport={"width": 412, "height": 915},  # Mobile viewport mimics short-video apps perfectly
         user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/156.0.0.0 Safari/537.36"
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 "
+            "Mobile/15E148 Safari/604.1"
         )
     )
 
@@ -76,9 +86,8 @@ def init_browser(cookies_dict=None):
     page = context.new_page()
     page.goto("https://smolish.com/", wait_until="networkidle")
     
-    # Wait until video elements are fully loaded in DOM
     try:
-        page.wait_for_selector('a[href*="/v/"]', timeout=10000)
+        page.wait_for_selector('a[href*="/v/"]', timeout=12000)
     except Exception:
         pass
 
@@ -119,7 +128,7 @@ def scroll_feed():
         if not page or page.is_closed():
             return jsonify({"success": False, "error": "Feed session not initialized. Call /feed first."}), 400
 
-        # Execute your target container scroll logic
+        # Multi-layer scroll execution (Container scroll + Window scroll + Wheel event + PageDown)
         scrolled = page.evaluate("""() => {
             const elements = [...document.querySelectorAll("*")]
                 .filter(el => {
@@ -132,17 +141,22 @@ def scroll_feed():
                     (a.scrollHeight - a.clientHeight)
                 );
 
-            const target = elements[0];
-            if (target) {
-                target.scrollTop += window.innerHeight;
-                return true;
-            } else {
-                window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
-                return false;
+            let didScroll = false;
+            if (elements.length > 0) {
+                elements[0].scrollTop += window.innerHeight;
+                didScroll = true;
             }
+            
+            window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+            window.scrollBy(0, window.innerHeight);
+            return didScroll;
         }""")
 
-        page.wait_for_timeout(3000)
+        # Also trigger native mouse wheel and keyboard actions
+        page.mouse.wheel(0, 800)
+        page.keyboard.press("PageDown")
+        
+        page.wait_for_timeout(3500)  # Allow reel transition animation to finish
         reel_url = extract_active_video_url(page)
         return jsonify({"success": True, "scrolled_container": scrolled, "url": reel_url})
     except Exception as e:
@@ -171,9 +185,9 @@ def download_video():
         "Accept": "*/*",
         "Referer": page_url,
         "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/156.0.0.0 Safari/537.36"
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 "
+            "Mobile/15E148 Safari/604.1"
         ),
     }
 
