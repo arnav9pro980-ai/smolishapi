@@ -15,48 +15,86 @@ context = None
 page = None
 
 
-def get_live_session_data():
-    """Dynamically boots Playwright, navigates to Smolish, and harvests live cookies/headers."""
+def extract_active_video_url(current_page):
+    """Deep scans the DOM to find any active video ID matching /v/ID in the viewport."""
+    try:
+        url = current_page.evaluate("""() => {
+            // 1. Search all elements with href, data attributes, or internal links containing /v/
+            const allElements = document.querySelectorAll('*');
+            for (const el of allElements) {
+                const href = el.href || el.getAttribute('href') || el.getAttribute('data-url') || '';
+                const match = href.match(/\/v\/(\d+)/);
+                if (match) {
+                    const rect = el.getBoundingClientRect();
+                    // Check if it's currently visible in the viewport window
+                    if (rect.top >= -200 && rect.top <= window.innerHeight + 200) {
+                        return 'https://smolish.com/v/' + match[1];
+                    }
+                }
+            }
+            
+            // 2. Fallback: Search for any /v/ pattern anywhere in the HTML body
+            const matches = [...document.body.innerHTML.matchAll(/\/v\/(\d+)/g)];
+            if (matches.length > 0) {
+                return 'https://smolish.com/v/' + matches[0][1];
+            }
+            
+            return window.location.href;
+        }""")
+        return url
+    except Exception:
+        return current_page.url
+
+
+def init_browser(cookies_dict=None):
+    """Initializes Playwright and opens the Smolish feed page."""
     global playwright_instance, browser, context, page
+
+    if page and not page.is_closed():
+        return  # Already initialized
 
     if not playwright_instance:
         playwright_instance = sync_playwright().start()
 
-    if not browser or not browser.is_connected():
-        browser = playwright_instance.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-            ]
+    # Launch headless browser with sandbox flags & realistic mobile/desktop viewport
+    browser = playwright_instance.chromium.launch(
+        headless=True,
+        args=[
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+        ]
+    )
+    
+    context = browser.new_context(
+        viewport={"width": 412, "height": 915},  # Mobile viewport mimics short-video apps perfectly
+        user_agent=(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 "
+            "Mobile/15E148 Safari/604.1"
         )
-        context = browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/122.0.0.0 Safari/537.36"
-            )
-        )
-        page = context.new_page()
+    )
 
-    # Hit the home page to trigger any automatic redirects and set valid cookies
+    if cookies_dict:
+        playwright_cookies = [
+            {"name": name, "value": value, "domain": ".smolish.com", "path": "/"}
+            for name, value in cookies_dict.items()
+        ]
+        context.add_cookies(playwright_cookies)
+
+    page = context.new_page()
     page.goto("https://smolish.com/", wait_until="networkidle")
     
     try:
-        page.wait_for_selector('a[href*="/v/"]', timeout=10000)
+        page.wait_for_selector('a[href*="/v/"]', timeout=12000)
     except Exception:
         pass
 
-    # Extract cookies from Playwright context to pass to requests session
-    pw_cookies = context.cookies("https://smolish.com/")
-    cookies_dict = {c["name"]: c["value"] for c in pw_cookies}
-    
-    current_url = page.url
-    user_agent = context.pages[0].evaluate("navigator.userAgent")
-
-    return cookies_dict, user_agent, current_url, page
+    try:
+        page.click("body", timeout=3000)
+    except Exception:
+        pass
 
 
 @app.route("/", methods=["GET"])
@@ -64,18 +102,22 @@ def index():
     return jsonify({
         "status": "online",
         "endpoints": {
-            "/feed": "GET - Fetches the current live feed/redirect URL using auto-harvested cookies",
-            "/scroll": "POST - Scrolls down to the next reel and gets its URL",
-            "/download": "POST - Downloads video by providing 'link' in JSON body",
+            "/feed": "POST - Initialize feed (optional JSON body with 'cookies' dict)",
+            "/scroll": "POST - Scroll down to the next reel and get its link",
+            "/download": "POST - Download video by providing 'link' (and optional 'cookies') in JSON body",
         },
     })
 
 
-@app.route("/feed", methods=["GET"])
+@app.route("/feed", methods=["POST"])
 def get_feed():
     try:
-        _, _, current_url, _ = get_live_session_data()
-        return jsonify({"success": True, "url": current_url})
+        data = request.get_json() or {}
+        cookies_dict = data.get("cookies", {})
+        
+        init_browser(cookies_dict)
+        reel_url = extract_active_video_url(page)
+        return jsonify({"success": True, "url": reel_url})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -83,27 +125,82 @@ def get_feed():
 @app.route("/scroll", methods=["POST"])
 def scroll_feed():
     try:
-        _, _, _, current_page = get_live_session_data()
-        if not current_page or current_page.is_closed():
-            return jsonify({"success": False, "error": "Browser session not active."}), 400
+        if not page or page.is_closed():
+            return jsonify({"success": False, "error": "Feed session not initialized. Call /feed first."}), 400
 
-        # Scroll down to load the next reel
-        current_page.evaluate("""() => {
+        # Multi-layer scroll execution (Container scroll + Window scroll + Wheel event + PageDown)
+        scrolled = page.evaluate("""() => {
+            const elements = [...document.querySelectorAll("*")]
+                .filter(el => {
+                    const s = getComputedStyle(el);
+                    return el.scrollHeight > el.clientHeight + 10 &&
+                        ["auto", "scroll", "overlay"].includes(s.overflowY);
+                })
+                .sort((a, b) =>
+                    (b.scrollHeight - b.clientHeight) -
+                    (a.scrollHeight - a.clientHeight)
+                );
+
+            let didScroll = false;
+            if (elements.length > 0) {
+                elements[0].scrollTop += window.innerHeight;
+                didScroll = true;
+            }
+            
             window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+            window.scrollBy(0, window.innerHeight);
+            return didScroll;
         }""")
-        current_page.keyboard.press("PageDown")
-        current_page.wait_for_timeout(3000)
 
-        new_url = current_page.url
-        return jsonify({"success": True, "url": new_url})
+        # Also trigger native mouse wheel and keyboard actions
+        page.mouse.wheel(0, 800)
+        page.keyboard.press("PageDown")
+        
+        page.wait_for_timeout(3500)  # Allow reel transition animation to finish
+        reel_url = extract_active_video_url(page)
+        return jsonify({"success": True, "scrolled_container": scrolled, "url": reel_url})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+
+@app.route("/screen", methods=["GET"])
+def screen():
+    try:
+        if not page or page.is_closed():
+            return jsonify({
+                "success": False,
+                "error": "Browser session not initialized. Call /feed first."
+            }), 400
+
+        screenshot = page.screenshot(
+            type="png",
+            full_page=False,
+            animations="disabled"
+        )
+
+        from flask import Response
+
+        return Response(
+            screenshot,
+            mimetype="image/png",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": 'inline; filename="screen.png"'
+            }
+        )
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+        
 
 @app.route("/download", methods=["POST"])
 def download_video():
     data = request.get_json() or {}
     user_input_link = data.get("link")
+    cookies = data.get("cookies", {})
 
     if not user_input_link:
         return jsonify({"success": False, "error": "Missing 'link' parameter in JSON body"}), 400
@@ -117,20 +214,20 @@ def download_video():
     url = f"https://smolish.com/api/videos/{video_id}/download?watermark=1"
     page_url = f"https://smolish.com/v/{video_id}"
 
-    try:
-        cookies_dict, user_agent, _, _ = get_live_session_data()
-    except Exception as e:
-        return jsonify({"success": False, "error": f"Failed to get session cookies: {str(e)}"}), 500
-
     headers = {
         "Accept": "*/*",
         "Referer": page_url,
-        "User-Agent": user_agent,
+        "User-Agent": (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 "
+            "Mobile/15E148 Safari/604.1"
+        ),
     }
 
     session = requests.Session()
     session.headers.update(headers)
-    session.cookies.update(cookies_dict)
+    if cookies:
+        session.cookies.update(cookies)
 
     try:
         with session.get(url, stream=True, allow_redirects=True, timeout=(15, 120)) as response:
@@ -139,7 +236,7 @@ def download_video():
 
             content_type = response.headers.get("Content-Type", "").lower()
             if "text/html" in content_type or "application/json" in content_type:
-                return jsonify({"success": False, "error": "Response is not a video. Verification challenge failed."}), 400
+                return jsonify({"success": False, "error": "Response is not a video. Cookies might have expired."}), 400
 
             with output_file.open("wb") as output:
                 for chunk in response.iter_content(chunk_size=128 * 1024):
