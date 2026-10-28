@@ -15,6 +15,30 @@ context = None
 page = None
 
 
+def extract_active_video_url(current_page):
+    """Scans the page DOM to find the currently visible video link (/v/ID)."""
+    try:
+        url = current_page.evaluate("""() => {
+            // Find all anchor tags containing /v/
+            const links = Array.from(document.querySelectorAll('a[href*="/v/"]'));
+            for (const link of links) {
+                const rect = link.getBoundingClientRect();
+                // Check if the link is currently visible in the viewport
+                if (rect.top >= 0 && rect.top <= window.innerHeight) {
+                    return link.href;
+                }
+            }
+            // Fallback to the first found video link if none match viewport bounds
+            if (links.length > 0) {
+                return links[0].href;
+            }
+            return window.location.href;
+        }""")
+        return url
+    except Exception:
+        return current_page.url
+
+
 def init_browser(cookies_dict=None):
     """Initializes Playwright and opens the Smolish feed page."""
     global playwright_instance, browser, context, page
@@ -78,8 +102,8 @@ def get_feed():
         cookies_dict = data.get("cookies", {})
         
         init_browser(cookies_dict)
-        current_url = page.url
-        return jsonify({"success": True, "url": current_url})
+        reel_url = extract_active_video_url(page)
+        return jsonify({"success": True, "url": reel_url})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -92,8 +116,8 @@ def scroll_feed():
 
         page.keyboard.press("ArrowDown")
         page.wait_for_timeout(2500)
-        current_url = page.url
-        return jsonify({"success": True, "url": current_url})
+        reel_url = extract_active_video_url(page)
+        return jsonify({"success": True, "url": reel_url})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
