@@ -1,441 +1,366 @@
 
-import hmac
 import re
-import time
 import threading
-import requests
-
-from pathlib import Path
-from functools import wraps
 from urllib.parse import urlparse
 
-from flask import Flask, jsonify, request, send_file
+import requests
+from flask import Flask, Response, jsonify, request, stream_with_context
 from playwright.sync_api import sync_playwright
 
 app = Flask(__name__)
 
-BASE_DIR = Path(__file__).resolve().parent
-DOWNLOAD_DIR = BASE_DIR / "downloads"
-DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
 API_KEY = "test123"
+BASE_URL = "https://smolish.com"
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/156.0.0.0 Safari/537.36"
+)
 
-playwright_instance = None
-browser_instance = None
-context_instance = None
-page_instance = None
-
-state_lock = threading.RLock()
-download_lock = threading.Lock()
-
-
-def require_api_key(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        supplied = request.headers.get("X-API-Key", "")
-        if not hmac.compare_digest(supplied, API_KEY):
-            return jsonify({"error": "Invalid or missing API key"}), 401
-        return func(*args, **kwargs)
-    return wrapper
+lock = threading.RLock()
+playwright = None
+browser = None
+context = None
+page = None
 
 
-def get_fresh_cookies():
-    """
-    Obtain fresh cookies by opening Smolish in a new browser context.
-    These are anonymous cookies unless the site provides a login flow.
-    """
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+def authorized():
+    supplied = request.headers.get("X-API-Key", "")
+    return supplied == API_KEY
+
+
+@app.before_request
+def check_api_key():
+    if request.path == "/api/health":
+        return None
+
+    if not authorized():
+        return jsonify({"error": "Unauthorized"}), 401
+
+
+def ensure_browser():
+    global playwright, browser, context, page
+
+    if browser is not None:
         try:
-            context = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/156.0.0.0 Safari/537.36"
-                )
-            )
-            page = context.new_page()
-            page.goto(
-                "https://smolish.com/",
-                wait_until="domcontentloaded",
-                timeout=60000
-            )
-            page.wait_for_timeout(1500)
-            return {
-                item["name"]: item["value"]
-                for item in context.cookies("https://smolish.com/")
-            }
-        finally:
-            browser.close()
+            if browser.is_connected() and page and not page.is_closed():
+                return
+        except Exception:
+            pass
+
+    close_browser()
+
+    playwright = sync_playwright().start()
+    browser = playwright.chromium.launch(headless=True)
+
+    context = browser.new_context(
+        user_agent=USER_AGENT,
+        viewport={"width": 1280, "height": 900},
+    )
+
+    page = context.new_page()
+    page.goto(
+        BASE_URL + "/",
+        wait_until="domcontentloaded",
+        timeout=60000,
+    )
+    page.wait_for_timeout(2000)
 
 
 def close_browser():
-    global playwright_instance, browser_instance
-    global context_instance, page_instance
+    global playwright, browser, context, page
 
-    for obj in (browser_instance, playwright_instance):
-        if obj:
+    old_page = page
+    old_context = context
+    old_browser = browser
+    old_playwright = playwright
+
+    page = None
+    context = None
+    browser = None
+    playwright = None
+
+    for obj, method in (
+        (old_page, "close"),
+        (old_context, "close"),
+        (old_browser, "close"),
+        (old_playwright, "stop"),
+    ):
+        if obj is not None:
             try:
-                if obj is browser_instance:
-                    obj.close()
-                else:
-                    obj.stop()
+                getattr(obj, method)()
             except Exception:
                 pass
 
-    browser_instance = None
-    playwright_instance = None
-    context_instance = None
-    page_instance = None
+
+def get_live_cookies():
+    ensure_browser()
+
+    # Read the latest cookies directly from the running browser context.
+    cookies = context.cookies([BASE_URL])
+
+    return {
+        cookie["name"]: cookie["value"]
+        for cookie in cookies
+    }
 
 
-def get_current_reel():
-    if page_instance is None:
+def video_id_from_url(url):
+    if not url:
         return None
 
-    current_url = page_instance.url
+    parsed = urlparse(url)
 
-    if re.search(r"/v/\d+", urlparse(current_url).path):
-        return current_url
+    if parsed.hostname not in ("smolish.com", "www.smolish.com"):
+        return None
+
+    match = re.search(r"/v/(\d+)(?:/|$)", parsed.path)
+    return match.group(1) if match else None
+
+
+def current_reel():
+    if page is None:
+        return None
+
+    video_id = video_id_from_url(page.url)
+
+    if video_id:
+        return f"{BASE_URL}/v/{video_id}"
 
     try:
-        candidates = page_instance.evaluate("""
-            () => {
-                const links = [...document.querySelectorAll('a[href*="/v/"]')];
-                const viewportHeight = window.innerHeight;
-                const viewportWidth = window.innerWidth;
+        links = page.locator('a[href*="/v/"]').evaluate_all(
+            """els => els.map(el => {
+                const r = el.getBoundingClientRect();
+                return {
+                    href: el.href,
+                    x: r.x + r.width / 2,
+                    y: r.y + r.height / 2,
+                    visible: r.width > 0 && r.height > 0
+                };
+            }).filter(el => el.visible)
+            """
+        )
 
-                return links.map(a => {
-                    const r = a.getBoundingClientRect();
-                    const visible =
-                        r.width > 0 &&
-                        r.height > 0 &&
-                        r.bottom > 0 &&
-                        r.top < viewportHeight &&
-                        r.right > 0 &&
-                        r.left < viewportWidth;
+        viewport = page.evaluate(
+            "() => ({w: innerWidth, h: innerHeight})"
+        )
 
-                    return {
-                        href: a.href,
-                        visible,
-                        centerDistance: Math.abs(
-                            (r.top + r.height / 2) - viewportHeight / 2
-                        )
-                    };
-                }).filter(x =>
-                    x.visible &&
-                    /\\/v\\/\\d+/.test(new URL(x.href).pathname)
-                ).sort((a, b) =>
-                    a.centerDistance - b.centerDistance
-                );
-            }
-        """)
+        candidates = []
 
-        for candidate in candidates:
-            parsed = urlparse(candidate["href"])
-            if parsed.hostname == "smolish.com" or parsed.hostname == "www.smolish.com":
-                return candidate["href"]
+        for item in links:
+            vid = video_id_from_url(item["href"])
 
-    except Exception:
-        pass
+            if vid and 0 <= item["y"] <= viewport["h"]:
+                distance = (
+                    abs(item["x"] - viewport["w"] / 2)
+                    + abs(item["y"] - viewport["h"] / 2)
+                )
+                candidates.append((distance, vid))
+
+        if candidates:
+            candidates.sort()
+            return f"{BASE_URL}/v/{candidates[0][1]}"
+
+    except Exception as exc:
+        app.logger.warning("Reel detection failed: %s", exc)
 
     return None
 
 
-@app.get("/")
-def index():
-    return jsonify({
-        "name": "Smolish Feed API",
-        "endpoints": [
-            "GET /api/health",
-            "POST /api/feed/start",
-            "POST /api/feed/next",
-            "POST /api/feed/close",
-            "POST /api/download",
-            "GET /api/files/<video_id>"
-        ]
+def live_session():
+    cookies = get_live_cookies()
+
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": USER_AGENT,
+        "Accept": "*/*",
+        "Referer": BASE_URL + "/",
     })
+    session.cookies.update(cookies)
+
+    return session
 
 
 @app.get("/api/health")
 def health():
     return jsonify({
         "status": "ok",
-        "feed_started": page_instance is not None
+        "browser_started": browser is not None,
     })
 
 
 @app.post("/api/feed/start")
-@require_api_key
-def start_feed():
-    global playwright_instance, browser_instance
-    global context_instance, page_instance
-
-    with state_lock:
+def feed_start():
+    with lock:
         try:
-            close_browser()
-
-            playwright_instance = sync_playwright().start()
-            browser_instance = playwright_instance.chromium.launch(
-                headless=True
-            )
-
-            context_instance = browser_instance.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/156.0.0.0 Safari/537.36"
-                )
-            )
-
-            page_instance = context_instance.new_page()
-            page_instance.goto(
-                "https://smolish.com/",
-                wait_until="domcontentloaded",
-                timeout=60000
-            )
-            page_instance.wait_for_timeout(2500)
-
-            reel_url = get_current_reel()
+            ensure_browser()
 
             return jsonify({
-                "status": "success",
-                "feed_started": True,
-                "reel_url": reel_url,
-                "message": (
-                    "Feed started"
-                    if reel_url
-                    else "Feed opened, but no reel link was detected"
-                )
+                "status": "started",
+                "current": current_reel(),
             })
 
         except Exception as exc:
-            close_browser()
+            app.logger.exception("Feed startup failed")
             return jsonify({
-                "error": "Could not start feed",
-                "details": str(exc)
+                "error": "Could not open feed",
+                "details": str(exc),
             }), 500
 
 
-@app.post("/api/feed/next")
-@require_api_key
-def next_feed():
-    with state_lock:
-        if page_instance is None:
+@app.get("/api/feed/current")
+def feed_current():
+    with lock:
+        if page is None:
             return jsonify({
-                "error": "Feed not started. Call /api/feed/start first."
-            }), 400
+                "error": "Start the feed first"
+            }), 409
+
+        return jsonify({
+            "current": current_reel(),
+        })
+
+
+@app.get("/api/feed/next")
+def feed_next():
+    with lock:
+        if page is None:
+            return jsonify({
+                "error": "Start the feed first"
+            }), 409
 
         try:
-            previous_url = get_current_reel()
+            previous = current_reel()
 
-            page_instance.keyboard.press("ArrowDown")
-            page_instance.mouse.wheel(
-                0, max(500, page_instance.evaluate("window.innerHeight * 0.85"))
-            )
+            page.locator("body").click(timeout=3000)
+            page.keyboard.press("ArrowDown")
+            page.wait_for_timeout(2500)
 
-            deadline = time.monotonic() + 12
-            reel_url = None
-
-            while time.monotonic() < deadline:
-                page_instance.wait_for_timeout(400)
-                candidate = get_current_reel()
-
-                if candidate and candidate != previous_url:
-                    reel_url = candidate
-                    break
-
-            if reel_url is None:
-                reel_url = get_current_reel()
+            current = current_reel()
 
             return jsonify({
-                "status": "success" if reel_url else "not_found",
-                "previous_reel_url": previous_url,
-                "reel_url": reel_url,
-                "changed": bool(
-                    reel_url and reel_url != previous_url
-                )
+                "status": "ok" if current else "not_detected",
+                "previous": previous,
+                "current": current,
+                "video_id": video_id_from_url(current),
             })
 
         except Exception as exc:
+            app.logger.exception("Feed scroll failed")
             return jsonify({
                 "error": "Could not scroll feed",
-                "details": str(exc)
+                "details": str(exc),
             }), 500
 
 
-@app.post("/api/feed/close")
-@require_api_key
-def close_feed_endpoint():
-    with state_lock:
+@app.post("/api/feed/stop")
+def feed_stop():
+    with lock:
         close_browser()
 
-    return jsonify({
-        "status": "success",
-        "message": "Feed session closed"
-    })
+    return jsonify({"status": "stopped"})
 
 
-@app.post("/api/download")
-@require_api_key
-def download_video():
-    data = request.get_json(silent=True) or {}
-    video_url = data.get("url", "")
-
-    if not isinstance(video_url, str):
-        return jsonify({"error": "url must be a string"}), 400
-
-    parsed = urlparse(video_url)
-    match = re.fullmatch(r"/v/(\\d+)/?", parsed.path)
-
-    if (
-        parsed.scheme != "https"
-        or parsed.hostname not in ("smolish.com", "www.smolish.com")
-        or not match
-    ):
-        return jsonify({
-            "error": "Provide a valid https://smolish.com/v/VIDEO_ID URL"
-        }), 400
-
-    video_id = match.group(1)
-    output_file = DOWNLOAD_DIR / f"{video_id}.mp4"
-
-    if output_file.exists() and output_file.stat().st_size > 0:
-        return jsonify({
-            "status": "success",
-            "video_id": video_id,
-            "download_url": request.host_url.rstrip("/")
-                + f"/api/files/{video_id}",
-            "cached": True
-        })
-
-    try:
-        # Prefer the current feed browser's fresh cookies, if available.
-        # Otherwise create a new browser context and obtain fresh site cookies.
-        with state_lock:
-            if context_instance is not None:
-                cookies = {
-                    item["name"]: item["value"]
-                    for item in context_instance.cookies("https://smolish.com/")
-                }
-            else:
-                cookies = get_fresh_cookies()
-
-        headers = {
-            "Accept": "*/*",
-            "Referer": video_url,
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/156.0.0.0 Safari/537.36"
-            )
-        }
-
-        api_url = (
-            f"https://smolish.com/api/videos/{video_id}/download"
-            "?watermark=1"
-        )
-
-        with download_lock:
-            with requests.Session() as session:
-                session.headers.update(headers)
-                session.cookies.update(cookies)
-
-                with session.get(
-                    api_url,
-                    stream=True,
-                    allow_redirects=True,
-                    timeout=(15, 120)
-                ) as response:
-                    if response.status_code != 200:
-                        return jsonify({
-                            "error": "Upstream download rejected",
-                            "status_code": response.status_code
-                        }), 502
-
-                    content_type = response.headers.get(
-                        "Content-Type", ""
-                    ).lower()
-
-                    if (
-                        "text/html" in content_type
-                        or "application/json" in content_type
-                    ):
-                        return jsonify({
-                            "error": (
-                                "Upstream returned a non-video response. "
-                                "Fresh anonymous cookies may not be sufficient "
-                                "if Smolish requires an authenticated session."
-                            )
-                        }), 502
-
-                    temp_file = DOWNLOAD_DIR / f"{video_id}.part"
-
-                    try:
-                        with temp_file.open("wb") as output:
-                            for chunk in response.iter_content(
-                                chunk_size=128 * 1024
-                            ):
-                                if chunk:
-                                    output.write(chunk)
-
-                        if temp_file.stat().st_size == 0:
-                            return jsonify({
-                                "error": "Downloaded file is empty"
-                            }), 502
-
-                        temp_file.replace(output_file)
-
-                    finally:
-                        if temp_file.exists():
-                            temp_file.unlink()
-
-        return jsonify({
-            "status": "success",
-            "video_id": video_id,
-            "download_url": request.host_url.rstrip("/")
-                + f"/api/files/{video_id}",
-            "cached": False
-        })
-
-    except requests.RequestException as exc:
-        return jsonify({
-            "error": "Download request failed",
-            "details": str(exc)
-        }), 502
-
-    except Exception as exc:
-        return jsonify({
-            "error": "Download failed",
-            "details": str(exc)
-        }), 500
-
-
-@app.get("/api/files/<video_id>")
-@require_api_key
-def get_downloaded_file(video_id):
+@app.get("/api/videos/<video_id>/download")
+def download_video(video_id):
     if not re.fullmatch(r"\d+", video_id):
         return jsonify({"error": "Invalid video ID"}), 400
 
-    video_file = DOWNLOAD_DIR / f"{video_id}.mp4"
+    session = None
+    upstream = None
 
-    if not video_file.is_file():
+    try:
+        with lock:
+            # Get fresh cookies from the active browser context.
+            session = live_session()
+
+        upstream_url = (
+            f"{BASE_URL}/api/videos/{video_id}/download?watermark=1"
+        )
+
+        upstream = session.get(
+            upstream_url,
+            headers={"Referer": f"{BASE_URL}/v/{video_id}"},
+            stream=True,
+            allow_redirects=True,
+            timeout=(15, 120),
+        )
+
+        if upstream.status_code != 200:
+            status = upstream.status_code
+            content_type = upstream.headers.get("Content-Type", "")
+            details = ""
+
+            if "json" in content_type.lower() or "text" in content_type.lower():
+                details = upstream.text[:1000]
+
+            upstream.close()
+            session.close()
+
+            return jsonify({
+                "error": "Upstream download failed",
+                "upstream_status": status,
+                "details": details,
+            }), 502
+
+        content_type = upstream.headers.get("Content-Type", "").lower()
+
+        if any(kind in content_type for kind in (
+            "text/html",
+            "application/json",
+            "text/plain",
+        )):
+            upstream.close()
+            session.close()
+
+            return jsonify({
+                "error": "The upstream response was not a video",
+                "content_type": content_type,
+            }), 502
+
+        def generate():
+            try:
+                for chunk in upstream.iter_content(128 * 1024):
+                    if chunk:
+                        yield chunk
+            finally:
+                upstream.close()
+                session.close()
+
+        response = Response(
+            stream_with_context(generate()),
+            content_type=upstream.headers.get(
+                "Content-Type", "video/mp4"
+            ),
+        )
+
+        response.headers["Content-Disposition"] = (
+            f'attachment; filename="{video_id}.mp4"'
+        )
+
+        length = upstream.headers.get("Content-Length")
+
+        if length and length.isdigit():
+            response.headers["Content-Length"] = length
+
+        response.headers["Cache-Control"] = "no-store"
+
+        return response
+
+    except Exception as exc:
+        if upstream is not None:
+            upstream.close()
+
+        if session is not None:
+            session.close()
+
+        app.logger.exception("Video download failed")
+
         return jsonify({
-            "error": "File not found. Download the reel first."
-        }), 404
-
-    return send_file(
-        video_file,
-        mimetype="video/mp4",
-        as_attachment=True,
-        download_name=f"{video_id}.mp4",
-        conditional=True
-    )
+            "error": "Download failed",
+            "details": str(exc),
+        }), 502
 
 
 if __name__ == "__main__":
-    app.run(
-        host="0.0.0.0",
-        port=int(__import__("os").environ.get("PORT", 5000)),
-        debug=False
-    )
+    app.run(host="0.0.0.0", port=10000, threaded=True)
