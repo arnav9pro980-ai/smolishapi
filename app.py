@@ -128,8 +128,16 @@ def init_browser(cookies_dict=None):
     )
 
     context = browser.new_context(
-        viewport={"width": 412, "height": 915},
-        user_agent=USER_AGENT,
+        viewport={"width": 1365, "height": 900},
+        screen={"width": 1365, "height": 900},
+        device_scale_factor=1,
+        is_mobile=False,
+        has_touch=False,
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        ),
         locale="en-US",
     )
 
@@ -284,28 +292,100 @@ def screen():
         }), 500
 
 
+
 @app.route("/scroll", methods=["POST"])
 def scroll_feed():
     try:
         if not page or page.is_closed():
             return jsonify({
                 "success": False,
-                "error": "Call POST /feed first.",
+                "error": "Call POST /feed first."
             }), 400
 
+        before = page.evaluate("""() => ({
+            url: location.href,
+            scrollY: window.scrollY,
+            scrollHeight: document.documentElement.scrollHeight,
+            clientHeight: document.documentElement.clientHeight,
+            bodyHeight: document.body?.scrollHeight || 0,
+            title: document.title,
+            text: (document.body?.innerText || '').slice(0, 1000),
+            containers: [...document.querySelectorAll('*')]
+                .filter(el => {
+                    const s = getComputedStyle(el);
+                    return el.scrollHeight > el.clientHeight + 20 &&
+                        ['auto', 'scroll'].includes(s.overflowY);
+                })
+                .slice(0, 15)
+                .map(el => ({
+                    tag: el.tagName,
+                    id: el.id,
+                    className: String(el.className).slice(0, 120),
+                    scrollTop: el.scrollTop,
+                    scrollHeight: el.scrollHeight,
+                    clientHeight: el.clientHeight
+                }))
+        })""")
+
+        # Move the pointer over the main viewport before wheel input.
+        page.mouse.move(
+            1365 // 2,
+            900 // 2
+        )
+
         page.keyboard.press("ArrowDown")
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(500)
+
+        page.mouse.wheel(0, 750)
+        page.wait_for_timeout(1500)
+
+        after = page.evaluate("""() => ({
+            url: location.href,
+            scrollY: window.scrollY,
+            scrollHeight: document.documentElement.scrollHeight,
+            clientHeight: document.documentElement.clientHeight,
+            bodyHeight: document.body?.scrollHeight || 0,
+            title: document.title,
+            text: (document.body?.innerText || '').slice(0, 1000),
+            containers: [...document.querySelectorAll('*')]
+                .filter(el => {
+                    const s = getComputedStyle(el);
+                    return el.scrollHeight > el.clientHeight + 20 &&
+                        ['auto', 'scroll'].includes(s.overflowY);
+                })
+                .slice(0, 15)
+                .map(el => ({
+                    tag: el.tagName,
+                    id: el.id,
+                    className: String(el.className).slice(0, 120),
+                    scrollTop: el.scrollTop,
+                    scrollHeight: el.scrollHeight,
+                    clientHeight: el.clientHeight
+                }))
+        })""")
+
+        moved = (
+            before["scrollY"] != after["scrollY"]
+            or before["url"] != after["url"]
+            or before["containers"] != after["containers"]
+        )
+
+        print("[SCROLL] Before:", before)
+        print("[SCROLL] After:", after)
+        print("[SCROLL] Movement detected:", moved)
 
         return jsonify({
             "success": True,
-            "url": extract_active_video_url(page),
-            "current_page": page.url,
+            "movement_detected": moved,
+            "before": before,
+            "after": after
         })
 
     except Exception as error:
+        app.logger.exception("Scroll failed")
         return jsonify({
             "success": False,
-            "error": str(error),
+            "error": str(error)
         }), 500
 
 
