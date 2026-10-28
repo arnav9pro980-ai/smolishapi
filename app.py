@@ -128,16 +128,8 @@ def init_browser(cookies_dict=None):
     )
 
     context = browser.new_context(
-        viewport={"width": 1365, "height": 900},
-        screen={"width": 1365, "height": 900},
-        device_scale_factor=1,
-        is_mobile=False,
-        has_touch=False,
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/131.0.0.0 Safari/537.36"
-        ),
+        viewport={"width": 412, "height": 915},
+        user_agent=USER_AGENT,
         locale="en-US",
     )
 
@@ -292,100 +284,149 @@ def screen():
         }), 500
 
 
-
 @app.route("/scroll", methods=["POST"])
 def scroll_feed():
     try:
         if not page or page.is_closed():
             return jsonify({
                 "success": False,
-                "error": "Call POST /feed first."
+                "error": "Call POST /feed first.",
             }), 400
 
-        before = page.evaluate("""() => ({
-            url: location.href,
-            scrollY: window.scrollY,
-            scrollHeight: document.documentElement.scrollHeight,
-            clientHeight: document.documentElement.clientHeight,
-            bodyHeight: document.body?.scrollHeight || 0,
-            title: document.title,
-            text: (document.body?.innerText || '').slice(0, 1000),
-            containers: [...document.querySelectorAll('*')]
+        before = page.evaluate("""() => {
+            const video = document.querySelector('video');
+            const scrollables = [...document.querySelectorAll('*')]
                 .filter(el => {
-                    const s = getComputedStyle(el);
-                    return el.scrollHeight > el.clientHeight + 20 &&
-                        ['auto', 'scroll'].includes(s.overflowY);
+                    const style = getComputedStyle(el);
+                    return /(auto|scroll|overlay)/.test(style.overflowY) &&
+                        el.scrollHeight > el.clientHeight + 20 &&
+                        el.clientHeight > 0;
                 })
-                .slice(0, 15)
                 .map(el => ({
+                    el,
+                    top: el.scrollTop,
+                    max: el.scrollHeight - el.clientHeight,
+                    clientHeight: el.clientHeight,
+                    containsVideo: !!video && el.contains(video),
                     tag: el.tagName,
-                    id: el.id,
-                    className: String(el.className).slice(0, 120),
-                    scrollTop: el.scrollTop,
-                    scrollHeight: el.scrollHeight,
-                    clientHeight: el.clientHeight
+                    id: el.id || '',
+                    className: typeof el.className === 'string'
+                        ? el.className.slice(0, 120) : ''
                 }))
-        })""")
+                .sort((a, b) =>
+                    Number(b.containsVideo) - Number(a.containsVideo) ||
+                    b.max - a.max
+                );
 
-        # Move the pointer over the main viewport before wheel input.
-        page.mouse.move(
-            1365 // 2,
-            900 // 2
-        )
+            return {
+                url: location.href,
+                scrollY: window.scrollY,
+                scrollHeight: document.documentElement.scrollHeight,
+                innerHeight: window.innerHeight,
+                videoCount: document.querySelectorAll('video').length,
+                activeVideo: video?.currentSrc || null,
+                containers: scrollables.slice(0, 8).map(x => ({
+                    tag: x.tag, id: x.id, className: x.className,
+                    top: x.top, max: x.max, containsVideo: x.containsVideo
+                }))
+            };
+        }""")
 
-        page.keyboard.press("ArrowDown")
-        page.wait_for_timeout(500)
+        scroll_result = page.evaluate("""() => {
+            const video = document.querySelector('video');
+            const candidates = [...document.querySelectorAll('*')]
+                .filter(el => {
+                    const style = getComputedStyle(el);
+                    return /(auto|scroll|overlay)/.test(style.overflowY) &&
+                        el.scrollHeight > el.clientHeight + 20 &&
+                        el.clientHeight > 0;
+                })
+                .map(el => ({
+                    el,
+                    max: el.scrollHeight - el.clientHeight,
+                    containsVideo: !!video && el.contains(video)
+                }))
+                .sort((a, b) =>
+                    Number(b.containsVideo) - Number(a.containsVideo) ||
+                    b.max - a.max
+                );
 
+            const target = candidates[0];
+            let containerBefore = null;
+            let containerAfter = null;
+
+            if (target) {
+                containerBefore = target.el.scrollTop;
+                target.el.scrollTop = Math.min(
+                    target.el.scrollTop + Math.max(450, target.el.clientHeight * 0.85),
+                    target.el.scrollHeight - target.el.clientHeight
+                );
+                target.el.dispatchEvent(new Event('scroll', { bubbles: true }));
+                containerAfter = target.el.scrollTop;
+            }
+
+            const windowBefore = window.scrollY;
+            window.scrollBy({ top: Math.max(450, window.innerHeight * 0.85), behavior: 'auto' });
+
+            return {
+                target: target ? {
+                    tag: target.el.tagName,
+                    id: target.el.id || null,
+                    className: typeof target.el.className === 'string'
+                        ? target.el.className.slice(0, 120) : null
+                } : null,
+                containerBefore,
+                containerAfter,
+                windowBefore,
+                windowAfter: window.scrollY
+            };
+        }""")
+
+        page.mouse.move(680, 650)
         page.mouse.wheel(0, 750)
+        page.keyboard.press("ArrowDown")
         page.wait_for_timeout(1500)
 
         after = page.evaluate("""() => ({
             url: location.href,
             scrollY: window.scrollY,
             scrollHeight: document.documentElement.scrollHeight,
-            clientHeight: document.documentElement.clientHeight,
-            bodyHeight: document.body?.scrollHeight || 0,
-            title: document.title,
-            text: (document.body?.innerText || '').slice(0, 1000),
-            containers: [...document.querySelectorAll('*')]
-                .filter(el => {
-                    const s = getComputedStyle(el);
-                    return el.scrollHeight > el.clientHeight + 20 &&
-                        ['auto', 'scroll'].includes(s.overflowY);
-                })
-                .slice(0, 15)
-                .map(el => ({
-                    tag: el.tagName,
-                    id: el.id,
-                    className: String(el.className).slice(0, 120),
-                    scrollTop: el.scrollTop,
-                    scrollHeight: el.scrollHeight,
-                    clientHeight: el.clientHeight
-                }))
+            innerHeight: window.innerHeight,
+            videoCount: document.querySelectorAll('video').length,
+            activeVideo: document.querySelector('video')?.currentSrc || null,
+            videoLinks: [...document.querySelectorAll('a[href*="/v/"]')]
+                .slice(0, 10).map(a => a.href),
+            bodyText: (document.body?.innerText || '').slice(0, 800)
         })""")
 
         moved = (
-            before["scrollY"] != after["scrollY"]
-            or before["url"] != after["url"]
-            or before["containers"] != after["containers"]
+            before["url"] != after["url"]
+            or before["scrollY"] != after["scrollY"]
+            or before["activeVideo"] != after["activeVideo"]
+            or scroll_result["containerBefore"] != scroll_result["containerAfter"]
+            or scroll_result["windowBefore"] != scroll_result["windowAfter"]
         )
-
-        print("[SCROLL] Before:", before)
-        print("[SCROLL] After:", after)
-        print("[SCROLL] Movement detected:", moved)
 
         return jsonify({
             "success": True,
-            "movement_detected": moved,
+            "moved": moved,
             "before": before,
-            "after": after
+            "scroll_attempt": scroll_result,
+            "after": after,
+            "active_video_url": extract_active_video_url(page),
+            "message": (
+                "Scroll movement detected."
+                if moved else
+                "No movement detected. Inspect /screen and /status. "
+                "If the site displays a verification screen, scrolling will "
+                "not work until the site permits access."
+            )
         })
 
     except Exception as error:
-        app.logger.exception("Scroll failed")
         return jsonify({
             "success": False,
-            "error": str(error)
+            "error": str(error),
         }), 500
 
 
