@@ -7,19 +7,18 @@ import requests
 
 from pathlib import Path
 from functools import wraps
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 from flask import Flask, jsonify, request, send_file
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 app = Flask(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
-CURL_FILE = BASE_DIR / "curl.txt"
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-API_KEY = "replace-this-with-your-own-long-random-key"
+API_KEY = "test123"
 
 playwright_instance = None
 browser_instance = None
@@ -40,60 +39,34 @@ def require_api_key(func):
     return wrapper
 
 
-def extract_cookies(curl_text):
-    patterns = [
-        r'-b\s+\^"([\s\S]*?)\^"',
-        r'--cookie\s+\^"([\s\S]*?)\^"',
-        r'-b\s+"([\s\S]*?)"',
-        r'--cookie\s+"([\s\S]*?)"',
-        r"-b\s+'([\s\S]*?)'",
-        r"--cookie\s+'([\s\S]*?)'",
-    ]
-
-    cookie_string = None
-
-    for pattern in patterns:
-        match = re.search(pattern, curl_text)
-        if match:
-            cookie_string = match.group(1)
-            break
-
-    if cookie_string is None:
-        raise ValueError("Could not find the cookie argument in curl.txt")
-
-    cookies = {}
-
-    for item in cookie_string.split(";"):
-        item = item.strip()
-        if "=" in item:
-            name, value = item.split("=", 1)
-            cookies[name.strip()] = value.strip()
-
-    return cookies
-
-
-def extract_headers(curl_text):
-    headers = {}
-
-    patterns = [
-        r'-H\s+\^"([^"]*(?:\^[^"]*)*)\^"',
-        r'--header\s+\^"([^"]*(?:\^[^"]*)*)\^"',
-        r'-H\s+"([^"]*)"',
-        r'--header\s+"([^"]*)"',
-        r"-H\s+'([^']*)'",
-        r"--header\s+'([^']*)'",
-    ]
-
-    for pattern in patterns:
-        for match in re.finditer(pattern, curl_text):
-            raw = match.group(1)
-            raw = raw.replace('^"', '"').replace("^", "")
-
-            if ":" in raw:
-                name, value = raw.split(":", 1)
-                headers[name.strip()] = value.strip()
-
-    return headers
+def get_fresh_cookies():
+    """
+    Obtain fresh cookies by opening Smolish in a new browser context.
+    These are anonymous cookies unless the site provides a login flow.
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/156.0.0.0 Safari/537.36"
+                )
+            )
+            page = context.new_page()
+            page.goto(
+                "https://smolish.com/",
+                wait_until="domcontentloaded",
+                timeout=60000
+            )
+            page.wait_for_timeout(1500)
+            return {
+                item["name"]: item["value"]
+                for item in context.cookies("https://smolish.com/")
+            }
+        finally:
+            browser.close()
 
 
 def close_browser():
@@ -199,14 +172,7 @@ def start_feed():
     global context_instance, page_instance
 
     with state_lock:
-        if not CURL_FILE.exists():
-            return jsonify({"error": "curl.txt file not found"}), 400
-
         try:
-            cookies = extract_cookies(
-                CURL_FILE.read_text(encoding="utf-8")
-            )
-
             close_browser()
 
             playwright_instance = sync_playwright().start()
@@ -221,16 +187,6 @@ def start_feed():
                     "Chrome/156.0.0.0 Safari/537.36"
                 )
             )
-
-            context_instance.add_cookies([
-                {
-                    "name": name,
-                    "value": value,
-                    "domain": ".smolish.com",
-                    "path": "/"
-                }
-                for name, value in cookies.items()
-            ])
 
             page_instance = context_instance.new_page()
             page_instance.goto(
@@ -330,7 +286,7 @@ def download_video():
         return jsonify({"error": "url must be a string"}), 400
 
     parsed = urlparse(video_url)
-    match = re.fullmatch(r"/v/(\d+)/?", parsed.path)
+    match = re.fullmatch(r"/v/(\\d+)/?", parsed.path)
 
     if (
         parsed.scheme != "https"
@@ -353,26 +309,27 @@ def download_video():
             "cached": True
         })
 
-    if not CURL_FILE.exists():
-        return jsonify({"error": "curl.txt file not found"}), 400
-
     try:
-        curl_text = CURL_FILE.read_text(encoding="utf-8")
-        cookies = extract_cookies(curl_text)
-        headers = extract_headers(curl_text)
+        # Prefer the current feed browser's fresh cookies, if available.
+        # Otherwise create a new browser context and obtain fresh site cookies.
+        with state_lock:
+            if context_instance is not None:
+                cookies = {
+                    item["name"]: item["value"]
+                    for item in context_instance.cookies("https://smolish.com/")
+                }
+            else:
+                cookies = get_fresh_cookies()
 
-        headers.setdefault("Accept", "*/*")
-        headers.setdefault("Referer", video_url)
-        headers.setdefault(
-            "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/156.0.0.0 Safari/537.36"
-        )
-
-        headers.pop("Cookie", None)
-        headers.pop("Host", None)
-        headers.pop("Content-Length", None)
+        headers = {
+            "Accept": "*/*",
+            "Referer": video_url,
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/156.0.0.0 Safari/537.36"
+            )
+        }
 
         api_url = (
             f"https://smolish.com/api/videos/{video_id}/download"
@@ -390,7 +347,6 @@ def download_video():
                     allow_redirects=True,
                     timeout=(15, 120)
                 ) as response:
-
                     if response.status_code != 200:
                         return jsonify({
                             "error": "Upstream download rejected",
@@ -408,7 +364,8 @@ def download_video():
                         return jsonify({
                             "error": (
                                 "Upstream returned a non-video response. "
-                                "The session may have expired."
+                                "Fresh anonymous cookies may not be sufficient "
+                                "if Smolish requires an authenticated session."
                             )
                         }), 502
 
