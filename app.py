@@ -25,8 +25,17 @@ def init_browser(cookies_dict=None):
     if not playwright_instance:
         playwright_instance = sync_playwright().start()
 
-    # Launch headless browser for server deployment
-    browser = playwright_instance.chromium.launch(headless=True)
+    # Launch headless browser with sandbox flags required for Linux/Render servers
+    browser = playwright_instance.chromium.launch(
+        headless=True,
+        args=[
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+        ]
+    )
+    
     context = browser.new_context(
         user_agent=(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
