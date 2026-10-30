@@ -99,7 +99,7 @@ app.post('/rooms/:id/signal', (req, res) => {
         return res.status(400).json({ error: 'Invalid signal payload' });
     }
 
-    const messageId = Math.random().toString(36.substring(2));
+   const messageId = Math.random().toString(36).substring(2);
     const message = {
         id: messageId,
         from,
